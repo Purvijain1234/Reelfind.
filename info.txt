@@ -1,0 +1,322 @@
+================================================================================
+  YouTube Video Recommendation System — Project Info
+================================================================================
+
+PROJECT OVERVIEW
+----------------
+A full-stack, content-based YouTube video discovery application that allows
+users to search for videos and receive similarity-based recommendations.
+The system integrates the YouTube Data API v3, a FastAPI Python backend,
+a MySQL/MariaDB database for caching, and a Vanilla JS/HTML/CSS frontend.
+
+TECH STACK
+----------
+  Layer          Technology / Library                  Purpose
+  -----------------------------------------------------------------------------
+  Frontend       HTML, CSS, Vanilla JavaScript         Search UI and video cards
+  Backend        Python 3.10+, FastAPI, Uvicorn        REST API and recommendation logic
+  Data Source    YouTube Data API v3                   Video search and metadata
+  Database       MySQL / MariaDB (XAMPP locally)       Caching and persistence
+  ML / NLP       scikit-learn HashingVectorizer         Sparse text feature vectors
+  Similarity     scipy, cosine_similarity              Content-based ranking
+  Config         python-dotenv                         Environment variable loading
+  HTTP Client    requests                              API calls to YouTube
+
+PYTHON DEPENDENCIES  (Backend/requirements.txt)
+-----------------------------------------------
+  fastapi>=0.115,<1.0
+  uvicorn[standard]>=0.30,<1.0
+  requests>=2.32,<3.0
+  mysql-connector-python>=9.0,<10.0
+  python-dotenv>=1.0,<2.0
+  scikit-learn>=1.5,<2.0
+  scipy>=1.13,<2.0
+
+================================================================================
+  PROJECT STRUCTURE
+================================================================================
+
+Youtube-Video-Recommendation-System-main/
+|
++-- Backend/
+|   +-- .env                        <- Local environment variables (not committed)
+|   +-- pipeline.py                 <- FastAPI application entry point
+|   +-- requirements.txt            <- Python package dependencies
+|   +-- schema.sql                  <- MySQL database schema (run once to set up)
+|   +-- app/
+|       +-- __init__.py
+|       +-- config.py               <- Reads env vars (API key, DB settings, etc.)
+|       +-- database.py             <- MySQL connection pool / db_cursor context manager
+|       +-- services.py             <- Core business logic (search, recommend, interact)
+|
++-- Frontend/
+|   +-- index.html                  <- Main page (search bar, video cards, recommendations)
+|   +-- styles.css                  <- Application styling
+|   +-- app.js                      <- Frontend logic (fetch calls, DOM manipulation)
+|   +-- config.js                   <- API base URL config (points to backend)
+|
++-- .gitignore
++-- README.md                       <- Full setup guide and documentation
++-- info.txt                        <- This file
+
+================================================================================
+  FILE DESCRIPTIONS
+================================================================================
+
+Backend/pipeline.py
+  The FastAPI application object is created here. CORS middleware is configured
+  to allow requests from the local frontend (ports 5500). Defines all API routes:
+    GET  /              -> Root info
+    GET  /health        -> Database + API key status
+    GET  /search        -> Searches YouTube (or returns cached results)
+    GET  /recommend/{video_id} -> Returns ranked recommendations
+    POST /interactions  -> Records a user interaction event
+
+Backend/app/config.py
+  Loads environment variables from .env using python-dotenv. Exposes:
+    YOUTUBE_API_KEY, MYSQL_HOST, MYSQL_PORT, MYSQL_USER, MYSQL_PASSWORD,
+    MYSQL_DATABASE, CACHE_TTL_HOURS, VECTOR_VERSION, DEFAULT_SEARCH_RESULTS
+
+Backend/app/database.py
+  Provides a thread-safe MySQL connection pool and the db_cursor() context
+  manager used throughout services.py for all database operations.
+
+Backend/app/services.py
+  Contains the full recommendation pipeline:
+    search_videos()         - Fetches from YouTube API or loads cached results,
+                              enriches metadata (tags, stats, duration), saves to DB.
+    recommend_from_search() - Reuses the search pool for the selected video,
+                              builds/reuses sparse feature vectors, ranks by
+                              cosine similarity, caches results.
+    get_or_create_vectors() - Retrieves stored vectors or vectorizes fresh metadata.
+    record_interaction()    - Persists a user event (click/like/dislike/skip/watch).
+    Helper functions:       - _video_text(), _enrich_videos(), _save_videos(),
+                              _serialize_sparse_vector(), _deserialize_sparse_vector()
+
+Backend/schema.sql
+  Defines the youtube_recommender database with five tables:
+    videos               -> Stores video metadata fetched from YouTube
+    search_queries       -> Caches query parameters and timestamp
+    search_query_results -> Links queries to their result video IDs (ordered)
+    video_vectors        -> Persists sparse feature vectors per video
+    recommendation_cache -> Stores ranked recommendations per (video, query)
+    user_interactions    -> Logs click/like/dislike/skip/watch events
+
+Frontend/index.html
+  Single-page app shell. Contains the search bar, results grid, and
+  recommendation panel. JavaScript is loaded from app.js and config.js.
+
+Frontend/app.js
+  Handles all frontend logic:
+    - Submits search queries to /search
+    - Renders video cards with thumbnail, title, channel, and "Find similar" button
+    - Calls /recommend/{video_id} when a video is selected
+    - Displays Top 3 / Top 10 recommendations
+    - Handles "Watch on YouTube" links
+
+Frontend/config.js
+  Exports window.REELFIND_CONFIG = { API_BASE_URL: "http://127.0.0.1:8000" }
+  Change this value if the backend runs on a different host or port.
+
+================================================================================
+  DATABASE SCHEMA SUMMARY
+================================================================================
+
+TABLE: videos
+  video_id VARCHAR(32) PK | title TEXT | description MEDIUMTEXT | tags JSON
+  category_id VARCHAR(16) | channel_title VARCHAR(255) | published_at DATETIME
+  view_count BIGINT | like_count BIGINT | duration VARCHAR(32)
+  thumbnail_url TEXT | video_url TEXT | metadata_updated_at TIMESTAMP
+
+TABLE: search_queries
+  query_hash CHAR(64) PK | query_text VARCHAR(255) | region_code CHAR(2)
+  relevance_language VARCHAR(10) | max_results TINYINT | cached_at DATETIME
+
+TABLE: search_query_results
+  query_hash CHAR(64) FK -> search_queries | video_id VARCHAR(32) FK -> videos
+  position_no TINYINT  [PK: (query_hash, video_id)]
+
+TABLE: video_vectors
+  video_id VARCHAR(32) PK FK -> videos | vector_data JSON
+  vector_version VARCHAR(32) | updated_at DATETIME
+
+TABLE: recommendation_cache
+  source_video_id FK -> videos | query_hash FK -> search_queries
+  recommended_video_id FK -> videos | score DOUBLE | rank_position TINYINT
+  cached_at DATETIME  [PK: (source_video_id, query_hash, recommended_video_id)]
+
+TABLE: user_interactions
+  interaction_id BIGINT PK AUTO_INCREMENT | user_id VARCHAR(128)
+  video_id FK -> videos | interaction_type ENUM(click,like,dislike,skip,watch)
+  watch_duration_seconds INT | created_at DATETIME
+
+================================================================================
+  API ENDPOINTS
+================================================================================
+
+Base URL (local): http://127.0.0.1:8000
+Swagger UI docs:  http://127.0.0.1:8000/docs
+
+  METHOD  ENDPOINT                           DESCRIPTION
+  ----------------------------------------------------------------------------
+  GET     /                                  API info (name, docs link)
+  GET     /health                            DB connection + API key check
+  GET     /search                            Search YouTube videos
+          Query params:
+            q            (required) Search query string
+            region_code  (default: IN)  Two-letter country code
+            language     (default: en)  Relevance language code
+            max_results  (default: 15, max: 50)
+  GET     /recommend/{video_id}              Get ranked recommendations
+          Path param: video_id  YouTube video ID
+          Query params: same as /search plus
+            top_n        (default: 10, max: 10)
+  POST    /interactions                      Record a user interaction
+          Body (JSON):
+            video_id               (string, required)
+            interaction_type       (click|like|dislike|skip|watch, required)
+            user_id                (string, optional)
+            watch_duration_seconds (int, optional)
+
+================================================================================
+  HOW THE RECOMMENDATION PIPELINE WORKS
+================================================================================
+
+  1. SEARCH
+     User submits a query -> frontend calls GET /search?q=...
+     Backend checks MySQL cache (CACHE_TTL_HOURS). If fresh, returns cached
+     video list. Otherwise calls YouTube Data API v3 (search + videos endpoints),
+     enriches metadata, stores to DB, returns results.
+
+  2. SELECT
+     User clicks "Find similar" on a video card -> frontend calls
+     GET /recommend/{video_id}?q=... (same query as search)
+
+  3. VECTORIZE
+     Backend retrieves all candidate videos from the same search pool.
+     For each video, it calls get_or_create_vectors():
+       - Checks video_vectors table for a stored vector at VECTOR_VERSION
+       - If missing, builds feature text from: title + description + tags +
+         channel_title + category_id  (URLs and IDs excluded deliberately)
+       - Vectorizes using HashingVectorizer (2^18 features, l2 norm, bigrams)
+       - Stores the sparse vector to video_vectors for reuse
+
+  4. RANK
+     Computes cosine similarity between the selected video's vector and every
+     other candidate. Sorts descending by score. Saves ranking to
+     recommendation_cache for the (source_video_id, query_hash) pair.
+
+  5. RESPOND
+     Returns top_n ranked videos with similarity_score and rank fields.
+     Frontend displays Top 3 by default; "Show top 10" expands the list.
+
+================================================================================
+  ENVIRONMENT VARIABLES  (Backend/.env)
+================================================================================
+
+  Variable                  Description                         Default
+  --------------------------------------------------------------------------
+  YOUTUBE_API_KEY           Your YouTube Data API v3 key        (required)
+  MYSQL_HOST                MySQL server host                   127.0.0.1
+  MYSQL_PORT                MySQL server port                   3306
+  MYSQL_USER                MySQL username                      root
+  MYSQL_PASSWORD            MySQL password                      (empty)
+  MYSQL_DATABASE            Target database name                youtube_recommender
+  CACHE_TTL_HOURS           Hours before cache expires          24
+  VECTOR_VERSION            Version tag for stored vectors      hashing-v1
+  DEFAULT_SEARCH_RESULTS    Default number of results to fetch  15
+
+  SECURITY: Never commit .env. Rotate any key that was accidentally committed.
+
+================================================================================
+  QUICK START (LOCAL)
+================================================================================
+
+  Prerequisites:
+    - Python 3.10+
+    - XAMPP (or any MySQL/MariaDB server)
+    - YouTube Data API v3 key from Google Cloud Console
+    - Modern browser
+
+  1. Start MySQL in XAMPP. Import Backend/schema.sql via phpMyAdmin.
+
+  2. Create Backend/.env with your API key and DB credentials (see above).
+
+  3. Install Python dependencies and start the backend:
+       cd Backend
+       py -m venv .venv
+       .\.venv\Scripts\Activate.ps1        (PowerShell - Windows)
+       pip install -r requirements.txt
+       uvicorn pipeline:app --reload
+
+  4. Verify health check: http://127.0.0.1:8000/health
+
+  5. Start the frontend static server (new terminal):
+       cd Frontend
+       py -m http.server 5500
+
+  6. Open http://127.0.0.1:5500 in your browser.
+
+================================================================================
+  CACHING BEHAVIOUR
+================================================================================
+
+  - Search results are cached in search_queries + search_query_results tables.
+  - Cache validity is controlled by CACHE_TTL_HOURS (default 24 hours).
+  - Repeating the same query (same q, region_code, language, max_results)
+    within the TTL returns the cached list without consuming YouTube API quota.
+  - Recommendation rankings are also cached per (source_video_id, query_hash).
+  - Feature vectors are stored in video_vectors and reused across requests.
+    If the vectorization strategy changes, bump VECTOR_VERSION to force
+    recalculation.
+
+================================================================================
+  KNOWN LIMITATIONS
+================================================================================
+
+  - Recommendations are drawn from the current search pool only; they are not
+    a broad independent discovery engine.
+  - Metadata quality varies by video. Missing tags, likes, or descriptions will
+    reduce recommendation relevance.
+  - region_code filters YouTube's regional results; it does not indicate a
+    creator's nationality.
+  - Recorded interactions are not yet used to influence rankings; they serve
+    as a foundation for future personalization work.
+  - This setup is for local development/learning only. Production use requires
+    secure secret management, HTTPS, CORS hardening, and YouTube API policy
+    compliance.
+
+================================================================================
+  INTERACTION TYPES SUPPORTED
+================================================================================
+
+  click   -> User clicked on a video
+  like    -> User liked a video
+  dislike -> User disliked a video
+  skip    -> User skipped a video
+  watch   -> User watched a video (optionally with watch_duration_seconds)
+
+================================================================================
+  VECTORIZER CONFIGURATION (HashingVectorizer)
+================================================================================
+
+  n_features      = 2^18 (262144)    Fixed-size sparse output; no vocabulary needed
+  alternate_sign  = False            All values non-negative
+  norm            = "l2"             Unit-norm vectors for cosine similarity
+  ngram_range     = (1, 2)           Unigrams and bigrams
+  stop_words      = "english"        Common English words removed
+  token_pattern   = alphanumeric+    Matches words starting with a letter
+
+================================================================================
+  CORS CONFIGURATION  (Backend/pipeline.py)
+================================================================================
+
+  Allowed origins (local dev):
+    http://127.0.0.1:5500
+    http://localhost:5500
+
+  Methods: all  |  Headers: all  |  Credentials: true
+
+  For production, replace these with your actual frontend domain.
+
+================================================================================
